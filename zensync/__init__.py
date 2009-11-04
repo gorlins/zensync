@@ -28,9 +28,9 @@ class ZenSync(object):
                 
             self.zen = ZenConnection(username=self.USERNAME,
                                      password=self.PASSWORD)
-            self.NewGroupAccess = AccessUpdater(**self.NewGroupAccess)
-            self.NewPhotoSetAccess = AccessUpdater(**self.NewPhotoSetAccess)
-            self.NewPhotoAccess = AccessUpdater(**self.NewPhotoAccess)
+            self.NewGroupAccess = AccessUpdater(self.NewGroupAccess)
+            self.NewPhotoSetAccess = AccessUpdater(self.NewPhotoSetAccess)
+            self.NewPhotoAccess = AccessUpdater(self.NewPhotoAccess)
         
         except Exception, e:
             print "Couldn't parse config file!!"
@@ -127,13 +127,3 @@ class ZenSync(object):
         self.zen.Authenticate()
         self.syncFolder(self.zen.LoadGroupHierarchy(), self.localRoot)
         
-        
-if __name__ == '__main__':
-    # Simple test usage
-    zsync = ZenSync('/home/scott/zenfolio/config.py')
-    from time import time
-    t1 = time()
-    zsync.sync()
-    print time()-t1
-    
-    pass
