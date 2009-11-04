@@ -8,6 +8,7 @@ import re
 import operator
 from threading import Thread
 from . import config_sample
+import Queue
 
 def slugify(string):
     string = re.sub('\s+', '_', string)
@@ -36,6 +37,9 @@ class ZenSync(object):
         except Exception, e:
             print "Couldn't parse config file!!"
             raise e
+        self._nthreads=20
+        self._queue = Queue.Queue(maxsize=2*self._nthreads)
+        
         
     def isValid(self, name):
         """Returns True if a file or folder name should be synced"""
@@ -66,11 +70,22 @@ class ZenSync(object):
     def sync(self):
         """Begin a sync according to the loaded configuration file"""
         self.zen.Authenticate()
-        t = SyncFolderThread(self, 
-                             self.zen.LoadGroupHierarchy(),
-                             self.localRoot)
-        t.start()
-        t.join()
+        self._queue.put(SyncFolderThread(self, 
+                                         self.zen.LoadGroupHierarchy(),
+                                         self.localRoot))
+
+        def worker():
+            while True:
+                item = self._queue.get()
+                item.start()
+                item.join()
+                self._queue.task_done()
+        for i in range(self._nthreads):
+            t = Thread(target=worker)
+            t.setDaemon(True)
+            t.start()
+        self._queue.join()
+
         
 class SyncPhotoSetThread(Thread):
     def __init__(self, zs, group, title, relpath, photofiles, **kwargs):
@@ -87,7 +102,6 @@ class SyncPhotoSetThread(Thread):
         relpath=self.relpath
         photofiles=self.photofiles
         
-        threads = []
         # Get photo album for group
         #title = self.groupPhotoSetName(group)
         ps = group.getPhotoSet(title)
@@ -116,10 +130,7 @@ class SyncPhotoSetThread(Thread):
                                       ps,
                                       f, 
                                       relpath)
-                t.start()
-                threads.append(t)
-        [t.join() for t in threads]
-        del threads
+                self.zs._queue.put(t)
         
 class UploadPhotoThread(Thread):
     def __init__(self, zs, gallery, filepath, relpath, **kwargs):
@@ -159,7 +170,7 @@ class SyncFolderThread(Thread):
         group=self.group
         folder=self.folder
         relpath=self.relpath
-        threads=[]
+        
         # Find photos and folders here
         ls = os.listdir(folder)
         dnames = [f for f in ls if os.path.isdir(os.path.join(folder, f))]
@@ -176,8 +187,7 @@ class SyncFolderThread(Thread):
                                self.zs.groupPhotoSetName(group),
                                myrelpath, 
                                [os.path.join(folder, f) for f in fnames])
-        t.start()
-        threads.append(t)
+        self.zs._queue.put(t)
         
         # Add and recurse folders
         for d in dnames:
@@ -192,9 +202,6 @@ class SyncFolderThread(Thread):
                                  child,
                                  os.path.join(folder, d),
                                  relpath=myrelpath+slugify(d))
-            t.start()
-            threads.append(t)
-        [t.join() for t in threads]
-        del threads
+            self.zs._queue.put(t)
         self.zs.logElement(relpath, group, op='Finished')
     
