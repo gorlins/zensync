@@ -6,7 +6,7 @@ from zenapi.updaters import (AccessUpdater, PhotoSetUpdater, GroupUpdater,
 import os
 import re
 import operator
-import threading
+from threading import Thread
 from . import config_sample
 
 def slugify(string):
@@ -37,23 +37,6 @@ class ZenSync(object):
             print "Couldn't parse config file!!"
             raise e
         
-    
-    class _threadcaller(threading.Thread):
-        def __init__(self, method, args, **kwargs):
-            threading.Thread.__init__(self, **kwargs)
-            if not operator.isSequenceType(args):
-                args = ((args,), {})
-            self.setargs(method, args[0], args[1])
-            
-        def setargs(self, method, methodargs, methodkwds):
-            self._response=None
-            self._method=method
-            self._methodargs = methodargs
-            self._methodkwds = methodkwds
-            
-        def run(self):
-            self._response=self._method(*self._methodargs, **self._methodkwds)
-        
     def isValid(self, name):
         """Returns True if a file or folder name should be synced"""
         return not (any([name.lower().startswith(s.lower()) 
@@ -80,83 +63,133 @@ class ZenSync(object):
         will not find your photos and will reupload them all!!"""
         return group.Title#'photos'#group.Title+' Picts'
     
-    def photoUploadThread(self, gallery, filepath, myrelpath):
-        def f():
-            photo = self.zen.upload(gallery, filepath, 
-                                    filenameStripRoot=self.localRoot)
-            self.zen.UpdatePhotoAccess(photo, self.NewPhotoAccess)
-            self.logAddElement(myrelpath, photo)
-        t = threading.Thread(target=f)
+    def sync(self):
+        """Begin a sync according to the loaded configuration file"""
+        self.zen.Authenticate()
+        t = SyncFolderThread(self, 
+                             self.zen.LoadGroupHierarchy(),
+                             self.localRoot)
         t.start()
-        return t
-    
-    def syncFolder(self, group, folder, relpath=''):
+        t.join()
+        
+class SyncPhotoSetThread(Thread):
+    def __init__(self, zs, group, title, relpath, photofiles, **kwargs):
+        Thread.__init__(self, **kwargs)
+        self.zs = zs
+        self.group=group
+        self.title=title
+        self.relpath=relpath
+        self.photofiles=photofiles
+        
+    def run(self):
+        group=self.group
+        title=self.title
+        relpath=self.relpath
+        photofiles=self.photofiles
+        
+        threads = []
+        # Get photo album for group
+        #title = self.groupPhotoSetName(group)
+        ps = group.getPhotoSet(title)
+        if ps is None:
+            updater=PhotoSetUpdater(Title=title, 
+                                    Caption=title,
+                                    CustomReference=relpath+'photos')
+                
+            ps = self.zs.zen.CreatePhotoset(group, photoset_type='Gallery',
+                                            updater=updater)
+            
+            self.zs.zen.UpdatePhotoSetAccess(ps, self.zs.NewPhotoSetAccess)
+            self.zs.logAddElement(relpath, ps)
+                                         
+        ps = self.zs.zen.LoadPhotoSet(ps)
+        
+        # Add photos
+        for f in photofiles:
+            photo = ps.getPhoto(os.path.basename(f))
+            if photo is None:
+                t = UploadPhotoThread(self.zs, 
+                                      ps,
+                                      f, 
+                                      relpath)
+                t.start()
+                threads.append(t)
+        [t.join() for t in threads]
+        del threads
+        
+class UploadPhotoThread(Thread):
+    def __init__(self, zs, gallery, filepath, relpath, **kwargs):
+        Thread.__init__(self, **kwargs)
+        self.zs = zs
+        self.gallery = gallery
+        self.filepath=filepath
+        self.relpath = relpath
+        
+    def run(self):
+        myrelpath=self.relpath
+        gallery=self.gallery
+        filepath=self.filepath
+        photo = self.zs.zen.upload(gallery, filepath, 
+                                   filenameStripRoot=self.zs.localRoot)
+        self.zs.zen.UpdatePhotoAccess(photo, self.zs.NewPhotoAccess)
+        self.zs.logAddElement(myrelpath, photo)
+        
+class SyncFolderThread(Thread):
+    def __init__(self, zs, group, folder, relpath='', **kwargs):
         """The business end.  No need to call directly, is designed for 
         recursive directory-tree walking
         
         :Parameters:
-          group: Group snapshot representing the parent group
-          folder: absolute path to a folder on your hard drive, which will be
-            synced with group
-          relpath: relative path to the localRoot or root gallery
+        group: Group snapshot representing the parent group
+        folder: absolute path to a folder on your hard drive, which will be
+        synced with group
+        relpath: relative path to the localRoot or root gallery
         """
-          
-        threads=[]
+        Thread.__init__(self, **kwargs)
+        self.zs=zs
+        self.group=group
+        self.folder=folder
+        self.relpath=relpath
         
+    def run(self):
+        group=self.group
+        folder=self.folder
+        relpath=self.relpath
+        threads=[]
         # Find photos and folders here
         ls = os.listdir(folder)
-        dnames = self.filterContent([f for f in ls if os.path.isdir(os.path.join(folder, f))])
-        fnames = self.filterFiles([f for f in ls if os.path.isfile(os.path.join(folder, f))])
+        dnames = [f for f in ls if os.path.isdir(os.path.join(folder, f))]
+        dnames = self.zs.filterContent(dnames)
+        fnames = [f for f in ls if os.path.isfile(os.path.join(folder, f))]
+        fnames = self.zs.filterFiles(fnames)
         if relpath == '':
             myrelpath = ''
         else:
             myrelpath = relpath+'/'
             
-        # Get photo album for group
-        title = self.groupPhotoSetName(group)
-        ps = group.getPhotoSet(title)
-        if ps is None:
-            updater=PhotoSetUpdater(Title=title, 
-                                    Caption=title,
-                                    CustomReference=myrelpath+'photos')
-
-                
-            ps = self.zen.CreatePhotoset(group, photoset_type='Gallery',
-                                         updater=updater)
-            self.zen.UpdatePhotoSetAccess(ps, self.NewPhotoSetAccess)
-            self.logAddElement(myrelpath, ps)
-                                         
-        ps = self.zen.LoadPhotoSet(ps)
+        t = SyncPhotoSetThread(self.zs,
+                               group, 
+                               self.zs.groupPhotoSetName(group),
+                               myrelpath, 
+                               [os.path.join(folder, f) for f in fnames])
+        t.start()
+        threads.append(t)
         
-        # Add photos
-        for f in fnames:
-            photo = ps.getPhoto(f)
-            if photo is None:
-                threads.append(self.photoUploadThread(ps,
-                                                      os.path.join(folder, f), 
-                                                      myrelpath))
-            
         # Add and recurse folders
         for d in dnames:
             child = group.getGroup(d)
             if child is None:
-                child = self.zen.CreateGroup(group, 
-                                             GroupUpdater(Title=d,
-                                                          Caption=d,
-                                                          CustomReference=myrelpath+slugify(d)))
-                self.zen.UpdateGroupAccess(child, self.NewGroupAccess)
-                self.logAddElement(myrelpath, child)
-            t = self._threadcaller(self.syncFolder, ((child, 
-                                                      os.path.join(folder, d),
-                                                      ), 
-                                                     dict(relpath=myrelpath+slugify(d))))
+                updater= GroupUpdater(Title=d, Caption=d,
+                                      CustomReference=myrelpath+slugify(d))
+                child = self.zs.zen.CreateGroup(group, updater)
+                self.zs.zen.UpdateGroupAccess(child, self.zs.NewGroupAccess)
+                self.zs.logAddElement(myrelpath, child)
+            t = SyncFolderThread(self.zs,
+                                 child,
+                                 os.path.join(folder, d),
+                                 relpath=myrelpath+slugify(d))
             t.start()
             threads.append(t)
         [t.join() for t in threads]
         del threads
     
-    def sync(self):
-        """Begin a sync according to the loaded configuration file"""
-        self.zen.Authenticate()
-        self.syncFolder(self.zen.LoadGroupHierarchy(), self.localRoot)
-        
