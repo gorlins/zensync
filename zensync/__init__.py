@@ -15,8 +15,8 @@ def slugify(string):
     return string.strip('_.- ').lower()
 
 class ZenSync(object):
-    def logAddElement(self, relpath, e):
-        print '+', relpath, e.__class__.__name__, e.Title
+    def logElement(self, relpath, e, op='+'):
+        print op, relpath, e.__class__.__name__, e.Title
         
     def __init__(self, configfile):
         defaults = vars(config_sample)
@@ -100,9 +100,13 @@ class SyncPhotoSetThread(Thread):
                                             updater=updater)
             
             self.zs.zen.UpdatePhotoSetAccess(ps, self.zs.NewPhotoSetAccess)
-            self.zs.logAddElement(relpath, ps)
+            self.zs.logElement(relpath, ps)
                                          
-        ps = self.zs.zen.LoadPhotoSet(ps)
+        try:
+            ps = self.zs.zen.LoadPhotoSet(ps)
+        except Exception:
+            self.zs.logElement(relpath, ps, 'Error')
+            return
         
         # Add photos
         for f in photofiles:
@@ -132,7 +136,7 @@ class UploadPhotoThread(Thread):
         photo = self.zs.zen.upload(gallery, filepath, 
                                    filenameStripRoot=self.zs.localRoot)
         self.zs.zen.UpdatePhotoAccess(photo, self.zs.NewPhotoAccess)
-        self.zs.logAddElement(myrelpath, photo)
+        self.zs.logElement(myrelpath, photo)
         
 class SyncFolderThread(Thread):
     def __init__(self, zs, group, folder, relpath='', **kwargs):
@@ -183,7 +187,7 @@ class SyncFolderThread(Thread):
                                       CustomReference=myrelpath+slugify(d))
                 child = self.zs.zen.CreateGroup(group, updater)
                 self.zs.zen.UpdateGroupAccess(child, self.zs.NewGroupAccess)
-                self.zs.logAddElement(myrelpath, child)
+                self.zs.logElement(myrelpath, child)
             t = SyncFolderThread(self.zs,
                                  child,
                                  os.path.join(folder, d),
@@ -192,4 +196,5 @@ class SyncFolderThread(Thread):
             threads.append(t)
         [t.join() for t in threads]
         del threads
+        self.zs.logElement(relpath, group, op='Finished')
     
