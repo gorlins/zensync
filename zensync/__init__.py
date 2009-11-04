@@ -5,7 +5,8 @@ from zenapi.updaters import (AccessUpdater, PhotoSetUpdater, GroupUpdater,
 
 import os
 import re
-
+import operator
+import threading
 from . import config_sample
 
 def slugify(string):
@@ -36,6 +37,22 @@ class ZenSync(object):
             print "Couldn't parse config file!!"
             raise e
         
+    
+    class _threadcaller(threading.Thread):
+        def __init__(self, method, args, **kwargs):
+            threading.Thread.__init__(self, **kwargs)
+            if not operator.isSequenceType(args):
+                args = ((args,), {})
+            self.setargs(method, args[0], args[1])
+            
+        def setargs(self, method, methodargs, methodkwds):
+            self._response=None
+            self._method=method
+            self._methodargs = methodargs
+            self._methodkwds = methodkwds
+            
+        def run(self):
+            self._response=self._method(*self._methodargs, **self._methodkwds)
         
     def isValid(self, name):
         """Returns True if a file or folder name should be synced"""
@@ -63,6 +80,16 @@ class ZenSync(object):
         will not find your photos and will reupload them all!!"""
         return group.Title#'photos'#group.Title+' Picts'
     
+    def photoUploadThread(self, gallery, filepath, myrelpath):
+        def f():
+            photo = self.zen.upload(gallery, filepath, 
+                                    filenameStripRoot=self.localRoot)
+            self.zen.UpdatePhotoAccess(photo, self.NewPhotoAccess)
+            self.logAddElement(myrelpath, photo)
+        t = threading.Thread(target=f)
+        t.start()
+        return t
+    
     def syncFolder(self, group, folder, relpath=''):
         """The business end.  No need to call directly, is designed for 
         recursive directory-tree walking
@@ -74,6 +101,8 @@ class ZenSync(object):
           relpath: relative path to the localRoot or root gallery
         """
           
+        threads=[]
+        
         # Find photos and folders here
         ls = os.listdir(folder)
         dnames = self.filterContent([f for f in ls if os.path.isdir(os.path.join(folder, f))])
@@ -103,10 +132,9 @@ class ZenSync(object):
         for f in fnames:
             photo = ps.getPhoto(f)
             if photo is None:
-                photo = self.zen.upload(ps, os.path.join(folder, f), 
-                                        filenameStripRoot=self.localRoot)
-                self.zen.UpdatePhotoAccess(photo, self.NewPhotoAccess)
-                self.logAddElement(myrelpath, photo)
+                threads.append(self.photoUploadThread(ps,
+                                                      os.path.join(folder, f), 
+                                                      myrelpath))
             
         # Add and recurse folders
         for d in dnames:
@@ -118,9 +146,14 @@ class ZenSync(object):
                                                           CustomReference=myrelpath+slugify(d)))
                 self.zen.UpdateGroupAccess(child, self.NewGroupAccess)
                 self.logAddElement(myrelpath, child)
-            self.syncFolder(child, os.path.join(folder, d),
-                            relpath=myrelpath+slugify(d))
-        pass
+            t = self._threadcaller(self.syncFolder, ((child, 
+                                                      os.path.join(folder, d),
+                                                      ), 
+                                                     dict(relpath=myrelpath+slugify(d))))
+            t.start()
+            threads.append(t)
+        [t.join() for t in threads]
+        del threads
     
     def sync(self):
         """Begin a sync according to the loaded configuration file"""

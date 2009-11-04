@@ -38,3 +38,5 @@ ValidFileTypes = ['jpg', 'jpeg', 'png', 'gif', 'tif', 'tiff']
 NewGroupAccess = {} # These need some OOP work
 NewPhotoSetAccess = {}
 NewPhotoAccess = {}
+
+Threaded = True # Will speed things up by requesting data from Zen in parallel
