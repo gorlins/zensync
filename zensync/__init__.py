@@ -187,7 +187,12 @@ class SyncFolderThread(Thread):
             if child is None:
                 updater= GroupUpdater(Title=d, Caption=d,
                                       CustomReference=myrelpath+slugify(d))
-                child = self.zs.zen.CreateGroup(self.group, updater)
+                try:
+                    child = self.zs.zen.CreateGroup(self.group, updater)
+                except Exception:
+                    self.zs.logElement(self.relpath, self.group,
+                                       op='Error with child ' + d)
+                    return
                 self.zs.zen.UpdateGroupAccess(child, self.zs.NewGroupAccess)
                 self.zs.logElement(self.relpath, child)
             t = SyncFolderThread(self.zs,
