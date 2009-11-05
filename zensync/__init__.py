@@ -37,7 +37,7 @@ class ZenSync(object):
         except Exception, e:
             print "Couldn't parse config file!!"
             raise e
-        self._nthreads=20
+        self._nthreads=50
         self._queue = Queue.Queue()
         
         
@@ -195,5 +195,5 @@ class SyncFolderThread(Thread):
                                  os.path.join(self.folder, d),
                                  relpath=myrelpath+slugify(d))
             self.zs._queue.put(t)
-        self.zs.logElement(self.relpath, self.group, op='Finished')
+        #self.zs.logElement(self.relpath, self.group, op='Finished')
     
