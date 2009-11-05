@@ -183,9 +183,10 @@ class SyncFolderThread(Thread):
         
         # Add and recurse folders
         for d in dnames:
-            child = self.group.getGroup(d)
+            title=d.strip()
+            child = self.group.getGroup(title)
             if child is None:
-                updater= GroupUpdater(Title=d, Caption=d,
+                updater= GroupUpdater(Title=title, Caption=title,
                                       CustomReference=myrelpath+slugify(d))
                 try:
                     child = self.zs.zen.CreateGroup(self.group, updater)
