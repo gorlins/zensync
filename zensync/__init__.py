@@ -38,7 +38,7 @@ class ZenSync(object):
             print "Couldn't parse config file!!"
             raise e
         self._nthreads=20
-        self._queue = Queue.Queue(maxsize=2*self._nthreads)
+        self._queue = Queue.Queue()
         
         
     def isValid(self, name):
@@ -56,8 +56,10 @@ class ZenSync(object):
         return filter(self.isValid, names)
     
     def filterFiles(self, fnames):
-        """Returns a list of valid and supported files"""
-        return filter(self.isSupportedFile, self.filterContent(fnames))
+        """Returns a list of valid and supported files
+        
+        Note that it does NOT first run filterContent"""
+        return filter(self.isSupportedFile, fnames)
     
     def groupPhotoSetName(self, group):
         """Decides what to name the photoset containing any photos in a folder
@@ -97,39 +99,34 @@ class SyncPhotoSetThread(Thread):
         self.photofiles=photofiles
         
     def run(self):
-        group=self.group
-        title=self.title
-        relpath=self.relpath
-        photofiles=self.photofiles
-        
         # Get photo album for group
         #title = self.groupPhotoSetName(group)
-        ps = group.getPhotoSet(title)
+        ps = self.group.getPhotoSet(self.title)
         if ps is None:
-            updater=PhotoSetUpdater(Title=title, 
-                                    Caption=title,
-                                    CustomReference=relpath+'photos')
+            updater=PhotoSetUpdater(Title=self.title, 
+                                    Caption=self.title,
+                                    CustomReference=self.relpath+'photos')
                 
-            ps = self.zs.zen.CreatePhotoset(group, photoset_type='Gallery',
+            ps = self.zs.zen.CreatePhotoset(self.group, photoset_type='Gallery',
                                             updater=updater)
             
             self.zs.zen.UpdatePhotoSetAccess(ps, self.zs.NewPhotoSetAccess)
-            self.zs.logElement(relpath, ps)
+            self.zs.logElement(self.relpath, ps)
                                          
         try:
             ps = self.zs.zen.LoadPhotoSet(ps)
         except Exception:
-            self.zs.logElement(relpath, ps, 'Error')
+            self.zs.logElement(self.relpath, ps, 'Error')
             return
         
         # Add photos
-        for f in photofiles:
+        for f in self.photofiles:
             photo = ps.getPhoto(os.path.basename(f))
             if photo is None:
                 t = UploadPhotoThread(self.zs, 
                                       ps,
                                       f, 
-                                      relpath)
+                                      self.relpath)
                 self.zs._queue.put(t)
         
 class UploadPhotoThread(Thread):
@@ -141,13 +138,10 @@ class UploadPhotoThread(Thread):
         self.relpath = relpath
         
     def run(self):
-        myrelpath=self.relpath
-        gallery=self.gallery
-        filepath=self.filepath
-        photo = self.zs.zen.upload(gallery, filepath, 
+        photo = self.zs.zen.upload(self.gallery, self.filepath, 
                                    filenameStripRoot=self.zs.localRoot)
         self.zs.zen.UpdatePhotoAccess(photo, self.zs.NewPhotoAccess)
-        self.zs.logElement(myrelpath, photo)
+        self.zs.logElement(self.relpath, photo)
         
 class SyncFolderThread(Thread):
     def __init__(self, zs, group, folder, relpath='', **kwargs):
@@ -167,41 +161,39 @@ class SyncFolderThread(Thread):
         self.relpath=relpath
         
     def run(self):
-        group=self.group
-        folder=self.folder
-        relpath=self.relpath
-        
         # Find photos and folders here
-        ls = os.listdir(folder)
-        dnames = [f for f in ls if os.path.isdir(os.path.join(folder, f))]
-        dnames = self.zs.filterContent(dnames)
-        fnames = [f for f in ls if os.path.isfile(os.path.join(folder, f))]
-        fnames = self.zs.filterFiles(fnames)
-        if relpath == '':
+        ls = os.listdir(self.folder)
+        ls = self.zs.filterContent(ls)
+        ls.sort()
+        dnames = [f for f in ls if os.path.isdir(os.path.join(self.folder, f))]
+        fnames = [os.path.join(self.folder, f) for f in self.zs.filterFiles(ls)]
+        fnames = filter(os.path.isfile, fnames)
+        
+        if self.relpath == '':
             myrelpath = ''
         else:
-            myrelpath = relpath+'/'
+            myrelpath = self.relpath+'/'
             
         t = SyncPhotoSetThread(self.zs,
-                               group, 
-                               self.zs.groupPhotoSetName(group),
+                               self.group, 
+                               self.zs.groupPhotoSetName(self.group),
                                myrelpath, 
-                               [os.path.join(folder, f) for f in fnames])
+                               fnames)
         self.zs._queue.put(t)
         
         # Add and recurse folders
         for d in dnames:
-            child = group.getGroup(d)
+            child = self.group.getGroup(d)
             if child is None:
                 updater= GroupUpdater(Title=d, Caption=d,
                                       CustomReference=myrelpath+slugify(d))
-                child = self.zs.zen.CreateGroup(group, updater)
+                child = self.zs.zen.CreateGroup(self.group, updater)
                 self.zs.zen.UpdateGroupAccess(child, self.zs.NewGroupAccess)
-                self.zs.logElement(myrelpath, child)
+                self.zs.logElement(self.relpath, child)
             t = SyncFolderThread(self.zs,
                                  child,
-                                 os.path.join(folder, d),
+                                 os.path.join(self.folder, d),
                                  relpath=myrelpath+slugify(d))
             self.zs._queue.put(t)
-        self.zs.logElement(relpath, group, op='Finished')
+        self.zs.logElement(self.relpath, self.group, op='Finished')
     
