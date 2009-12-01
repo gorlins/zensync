@@ -6,7 +6,7 @@ from zenapi.updaters import (AccessUpdater, PhotoSetUpdater, GroupUpdater,
 import os
 import re
 import operator
-from threading import Thread
+from threading import Thread, Lock
 from . import config_sample
 import Queue
 
@@ -17,7 +17,9 @@ def slugify(string):
 
 class ZenSync(object):
     def logElement(self, relpath, e, op='+'):
-        print op, relpath, e.__class__.__name__, e.Title
+        with self.loglock:
+            print op, relpath, e.__class__.__name__, e.Title
+        
         
     def __init__(self, configfile):
         defaults = vars(config_sample)
@@ -39,7 +41,7 @@ class ZenSync(object):
             raise e
         self._nthreads=50
         self._queue = Queue.Queue()
-        
+        self.loglock = Lock()
         
     def isValid(self, name):
         """Returns True if a file or folder name should be synced"""
@@ -128,6 +130,9 @@ class SyncPhotoSetThread(Thread):
                                       f, 
                                       self.relpath)
                 self.zs._queue.put(t)
+            else:
+                # updating photos not yet implemented
+                pass
         
 class UploadPhotoThread(Thread):
     def __init__(self, zs, gallery, filepath, relpath, **kwargs):
