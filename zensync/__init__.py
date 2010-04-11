@@ -38,8 +38,12 @@ def slugify(string):
 
 class ZenSync(object):
     def logElement(self, relpath, e, op='+'):
-        with self.loglock:
+        self.loglock.acquire()
+        try:
             print op, relpath, e.__class__.__name__, e.Title
+        except Exception:
+            pass
+        self.loglock.release()
         
         
     def __init__(self, configfile):
