@@ -15,12 +15,17 @@ localRoot = 'C:\MyPictures'
 zenRoot = None
 
 # If True, will delete files from Zen if not found on hard drive
-DeleteMissingZenFiles = False
+DeleteMissingZenFiles = False # Not implemented - will not delete anything
 
 # If True, will delete files from hard drive if not found on Zen
-DeleteMissingLocalFiles = False
+DeleteMissingLocalFiles = False # Not implemented - will not delete anything
 
-# If True, will reupload newer files
+# If True, will reupload newer files.
+"""This compares the modification time of the file with the upload time on 
+Zenfolio.  Note, however, that the upload time is on the ZF server timezone,
+meaning that results may be inaccurate if the most recent file change is within
+a day (depending on your timezone) of the latest upload
+"""
 ReuploadNewer = True
 
 # Exclude files or folders 

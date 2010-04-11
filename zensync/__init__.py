@@ -25,6 +25,7 @@ from zenapi.updaters import (AccessUpdater, PhotoSetUpdater, GroupUpdater,
 
 import os
 import re
+from datetime import datetime
 import operator
 from threading import Thread, Lock
 from . import config_sample
@@ -55,6 +56,8 @@ class ZenSync(object):
             self.NewGroupAccess = AccessUpdater(self.NewGroupAccess)
             self.NewPhotoSetAccess = AccessUpdater(self.NewPhotoSetAccess)
             self.NewPhotoAccess = AccessUpdater(self.NewPhotoAccess)
+            
+            self.config = config
         
         except Exception, e:
             print "Couldn't parse config file!!"
@@ -142,7 +145,10 @@ class SyncPhotoSetThread(Thread):
             return
         
         # Add photos
-        for f in self.photofiles:
+        reupload = self.zs.config['ReuploadNewer']
+        stats = [datetime.fromtimestamp(os.stat(f).st_mtime)
+                 for f in self.photofiles]
+        for f,s in zip(self.photofiles, stats):
             photo = ps.getPhoto(os.path.basename(f))
             if photo is None:
                 t = UploadPhotoThread(self.zs, 
@@ -150,8 +156,13 @@ class SyncPhotoSetThread(Thread):
                                       f, 
                                       self.relpath)
                 self.zs._queue.put(t)
-            else:
-                # updating photos not yet implemented
+            elif reupload and s > photo.UploadedOn.Value:
+                # updating photos
+                self.zs._queue.put(ReuploadPhotoThread(self.zs,
+                                                       ps,
+                                                       f,
+                                                       self.relpath,
+                                                       photo))
                 pass
         
 class UploadPhotoThread(Thread):
@@ -159,7 +170,7 @@ class UploadPhotoThread(Thread):
         Thread.__init__(self, **kwargs)
         self.zs = zs
         self.gallery = gallery
-        self.filepath=filepath
+        self.filepath= filepath
         self.relpath = relpath
         
     def run(self):
@@ -167,6 +178,23 @@ class UploadPhotoThread(Thread):
                                    filenameStripRoot=self.zs.localRoot)
         self.zs.zen.UpdatePhotoAccess(photo, self.zs.NewPhotoAccess)
         self.zs.logElement(self.relpath, photo)
+
+class ReuploadPhotoThread(Thread):
+    def __init__(self, zs, gallery, filepath, relpath, original, **kwargs):
+        Thread.__init__(self, **kwargs)
+        self.zs = zs
+        self.gallery = gallery
+        self.filepath = filepath
+        self.relpath = relpath
+        self.original = original
+        
+    def run(self):
+        new = self.zs.zen.upload(self.gallery, self.filepath, 
+                                   filenameStripRoot=self.zs.localRoot)
+        self.zs.zen.ReplacePhoto(self.original, new)
+        self.zs.zen.DeletePhoto(new)
+        self.zs.logElement(self.relpath, photo, op='>')
+        
         
 class SyncFolderThread(Thread):
     def __init__(self, zs, group, folder, relpath='', **kwargs):
