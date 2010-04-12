@@ -197,7 +197,7 @@ class ReuploadPhotoThread(Thread):
                                    filenameStripRoot=self.zs.localRoot)
         self.zs.zen.ReplacePhoto(self.original, new)
         self.zs.zen.DeletePhoto(new)
-        self.zs.logElement(self.relpath, photo, op='>')
+        self.zs.logElement(self.relpath, self.original, op='>')
         
         
 class SyncFolderThread(Thread):
